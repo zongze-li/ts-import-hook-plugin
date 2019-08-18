@@ -61,7 +61,7 @@
     "typescript": "^3.5.3",
     "webpack": "^4.38.0",
     "webpack-bundle-analyzer": "^3.3.2",
-    "webpack-cli": "^3.3.5"
+    "webpack-cli": "^3.3.7"
   },
   "dependencies": {
     "tslib": "^1.10.0",

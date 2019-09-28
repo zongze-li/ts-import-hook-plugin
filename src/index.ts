@@ -1,207 +1,140 @@
 import * as ts from 'typescript'
-import { join as pathJoin, sep } from 'path'
 
-export interface Options {
-  libraryName?: string
-  style?: boolean | 'css' | string | ((name: string) => string)
-  libraryDirectory?: ((name: string) => string) | string
-  camel2DashComponentName?: boolean
-  camel2UnderlineComponentName?: boolean
-  transformToDefaultImport?: boolean
-  resolveContext?: string[]
-}
+// Partial<Options> | Array<Partial<Options>>
+export function createTransformer(_options = {}) {
 
-export interface ImportedStruct {
-  importName: string
-  variableName?: string
-}
-
-function join(...params: string[]) {
-  /* istanbul ignore if  */
-  if (sep === '\\') {
-    const ret = pathJoin(...params)
-    return ret.replace(/\\/g, '/')
-  }
-  /* istanbul ignore next  */
-  return pathJoin(...params)
-}
-
-// camel2Dash camel2Underline
-// borrow from https://github.com/ant-design/babel-plugin-import
-function camel2Dash(_str: string) {
-  const str = _str[0].toLowerCase() + _str.substr(1)
-  return str.replace(/([A-Z])/g, ($1) => `-${$1.toLowerCase()}`)
-}
-
-function camel2Underline(_str: string) {
-  const str = _str[0].toLowerCase() + _str.substr(1)
-  return str.replace(/([A-Z])/g, ($1) => `_${$1.toLowerCase()}`)
-}
-
-function getImportedStructs(node: ts.Node) {
-  const structs = new Set<ImportedStruct>()
-  node.forEachChild((importChild) => {
-    if (!ts.isImportClause(importChild)) {
-      return
-    }
-
-    // not allow default import, or mixed default and named import
-    // e.g. import foo from 'bar'
-    // e.g. import foo, { bar as baz } from 'x'
-    // and must namedBindings exist
-    if (importChild.name || !importChild.namedBindings) {
-      return
-    }
-
-    // not allow namespace import
-    // e.g. import * as _ from 'lodash'
-    if (!ts.isNamedImports(importChild.namedBindings)) {
-      return
-    }
-
-    importChild.namedBindings.forEachChild((namedBinding) => {
-      // ts.NamedImports.elements will always be ts.ImportSpecifier
-      const importSpecifier = <ts.ImportSpecifier>namedBinding
-
-      // import { foo } from 'bar'
-      if (!importSpecifier.propertyName) {
-        structs.add({ importName: importSpecifier.name.text })
-        return
-      }
-
-      // import { foo as bar } from 'baz'
-      structs.add({
-        importName: importSpecifier.propertyName.text,
-        variableName: importSpecifier.name.text,
-      })
-    })
-  })
-  return structs
-}
-
-function createDistAst(struct: ImportedStruct, options: Options) {
-  const astNodes: ts.Node[] = []
-
-  const { libraryName } = options
-  const _importName = struct.importName
-  const importName = options.camel2UnderlineComponentName
-    ? camel2Underline(_importName)
-    : options.camel2DashComponentName
-    ? camel2Dash(_importName)
-    : _importName
-
-  const libraryDirectory =
-    typeof options.libraryDirectory === 'function'
-      ? options.libraryDirectory(_importName)
-      : join(options.libraryDirectory || '', importName)
-
-  /* istanbul ignore next  */
-  if (process.env.NODE_ENV !== 'production') {
-    if (libraryDirectory == null) {
-      console.warn(`custom libraryDirectory resolve a ${libraryDirectory} path`)
-    }
-  }
-
-  const importPath = join(libraryName!, libraryDirectory)
-  try {
-    require.resolve(importPath, {
-      paths: [process.cwd(), ...options.resolveContext!],
-    })
-    const scriptNode = ts.createImportDeclaration(
-      undefined,
-      undefined,
-      ts.createImportClause(
-        struct.variableName || !options.transformToDefaultImport ? undefined : ts.createIdentifier(struct.importName),
-        struct.variableName
-          ? ts.createNamedImports([
-              ts.createImportSpecifier(
-                options.transformToDefaultImport
-                  ? ts.createIdentifier('default')
-                  : ts.createIdentifier(struct.importName),
-                ts.createIdentifier(struct.variableName),
-              ),
-            ])
-          : options.transformToDefaultImport
-          ? undefined
-          : ts.createNamedImports([ts.createImportSpecifier(undefined, ts.createIdentifier(struct.importName))]),
-      ),
-      ts.createLiteral(importPath),
-    )
-
-    astNodes.push(scriptNode)
-
-    if (options.style) {
-      const { style } = options
-      const stylePath =
-        typeof style === 'function' ? style(importPath) : `${importPath}/style/${style === true ? 'index' : style}.js`
-
-      if (stylePath) {
-        const styleNode = ts.createImportDeclaration(undefined, undefined, undefined, ts.createLiteral(stylePath))
-        astNodes.push(styleNode)
-      }
-    }
-    // tslint:disable-next-line:no-empty
-  } catch (e) {
-    astNodes.push(
-      ts.createImportDeclaration(
-        undefined,
-        undefined,
-        ts.createImportClause(
-          undefined,
-          ts.createNamedImports([ts.createImportSpecifier(undefined, ts.createIdentifier(_importName))]),
-        ),
-        ts.createLiteral(libraryName!),
-      ),
-    )
-  }
-  return astNodes
-}
-
-const defaultOptions = {
-  libraryName: 'antd',
-  libraryDirectory: 'lib',
-  style: false,
-  camel2DashComponentName: true,
-  transformToDefaultImport: true,
-  resolveContext: [],
-}
-
-export function createTransformer(_options: Partial<Options> | Array<Partial<Options>> = {}) {
-  const mergeDefault = (options: Partial<Options>) => ({ ...defaultOptions, ...options })
-  const optionsArray: Options[] = Array.isArray(_options)
-    ? _options.map((options) => mergeDefault(options))
-    : [mergeDefault(_options)]
-
-  const transformer: ts.TransformerFactory<ts.SourceFile> = (context) => {
-    const visitor: ts.Visitor = (node) => {
+  const transformer = (context) => {
+    const visitor = (node) => {
       if (ts.isSourceFile(node)) {
         return ts.visitEachChild(node, visitor, context)
       }
-
       if (!ts.isImportDeclaration(node)) {
         return node
       }
 
-      const importedLibName = (<ts.StringLiteral>node.moduleSpecifier).text
-
-      const options = optionsArray.find((_) => _.libraryName === importedLibName)
+      const importedLibName = node.moduleSpecifier.text;
+      const value = importedLibName;
+      // console.log('value', value);
+      const options = [].concat(_options).find((opt) => {
+        let { libraryName = '' } = opt;
+        let matched = false;
+        if (typeof libraryName === 'function') {
+          matched = libraryName(value);
+        } else {
+          libraryName = String(libraryName);
+          if (/^\/.*\/$/.test(libraryName)) {
+            matched = new RegExp(libraryName.slice(1, -1)).test(value);
+          }
+        }
+        return value === libraryName || matched;
+      })
 
       if (!options) {
         return node
       }
 
-      const structs = getImportedStructs(node)
-      if (structs.size === 0) {
-        return node
+      const newSpecsData = [];
+      const prevSpecsData = [];
+      collectSpecsData(node, prevSpecsData, newSpecsData, options, value);
+
+      if (prevSpecsData.length === newSpecsData.length) {
+        // N.B: 如果没发生变化，则直接return退出，防止死循环；to avoid endless loop.
+        const isChanged = prevSpecsData.some((item, idx) => {
+          const newItem = newSpecsData[idx];
+          // console.log('?', item, newItem);
+          const ret = (
+            newItem.value !== item.value ||
+            newItem.importedName !== item.importedName ||
+            newItem.localName !== item.localName ||
+            newItem.type !== item.type ||
+            newItem.isDefaultImport !== item.isDefaultImport
+          )
+          // if (ret) console.log('?', item, newItem)
+          return ret;
+        });
+        // console.log('isChanged', isChanged)
+        if (!isChanged) {
+          return node;
+        }
       }
 
-      return Array.from(structs).reduce(
-        (acc, struct) => {
-          const nodes = createDistAst(struct, options)
-          return acc.concat(nodes)
-        },
-        <ts.Node[]>[],
-      )
+      const map = newSpecsData.reduce((acc, cur) => {
+        if (!acc[cur.value]) {
+          acc[cur.value] = [cur];
+        } else {
+          acc[cur.value] = acc[cur.value].concat(cur);
+        }
+        return acc;
+      }, {});
+
+      // console.log('map', map);
+
+
+      const newSpecs = [];
+
+      Object.keys(map).forEach(value => {
+        const items = map[value];
+        const nonDefaultList = items.filter(item => !item.isDefaultImport && (item.isDefaultImport !== undefined || item.type));
+        const defaultList = items.filter(item => item.isDefaultImport || (item.isDefaultImport === undefined && !item.type));
+        const namespaceList = items.filter(item => item.type === 'NamespaceImport');
+        // console.log('???', value, 'nonDefaultList', nonDefaultList, 'defaultList', defaultList, 'namespaceList', namespaceList, items)
+        let importDeclaration;
+        // function createImportClause(name: Identifier | undefined, namedBindings: NamedImportBindings | undefined): ImportClause;
+
+        if (namespaceList.length > 0) {
+          importDeclaration = ts.createImportDeclaration(
+            undefined,
+            undefined,
+            ts.createImportClause(
+              undefined,
+              ts.createNamespaceImport(
+                ts.createIdentifier(items.localName)
+              )
+            ),
+            ts.createLiteral(value)
+          )
+        } else {
+          const defaultItem = defaultList.length > 0 ? defaultList[0] : undefined;
+          const defaultName = defaultItem ? defaultItem.localName : undefined;
+          importDeclaration = ts.createImportDeclaration(
+            undefined,
+            undefined,
+            !defaultName && !nonDefaultList.length ? undefined : ts.createImportClause(
+              defaultName ? ts.createIdentifier(defaultName) : undefined,
+              nonDefaultList.length > 0
+                ? ts.createNamedImports(
+                  nonDefaultList.map(item => {
+                    let ret;
+                    if (item.localName && item.localName !== item.importedName) {
+                      ret = ts.createImportSpecifier(
+                        ts.createIdentifier(item.importedName),
+                        ts.createIdentifier(item.localName),
+                      );
+                    } else {
+                      ret = ts.createImportSpecifier(
+                        undefined,
+                        ts.createIdentifier(item.importedName),
+                      );
+                    }
+                    return ret;
+                  })
+                )
+                : undefined
+            ),
+            ts.createLiteral(value)
+          );
+        }
+        // console.log('importDeclaration', importDeclaration)
+        if (importDeclaration) {
+          newSpecs.push(importDeclaration);
+        }
+
+      });
+
+      if (newSpecs.length) {
+        return newSpecs;
+      }
+      return node;
     }
 
     return (node) => ts.visitNode(node, visitor)
@@ -210,3 +143,109 @@ export function createTransformer(_options: Partial<Options> | Array<Partial<Opt
 }
 
 export default createTransformer
+
+function collectSpecsData(node, prevSpecsData, newSpecsData, options, value) {
+  const { customName: nameHook = v => v } = options;
+  if (!node.importClause) {
+    const option = {
+      value: node.moduleSpecifier.text,
+      // e.g. import 'react'
+      type: 'ImportDeclaration',
+    }
+    prevSpecsData.push(option);
+    customResolveOption(option, nameHook, newSpecsData, value);
+    return;
+  }
+
+  node.forEachChild((importChild) => {
+    if (!ts.isImportClause(importChild)) {
+      return
+    }
+    const { name, namedBindings } = importChild;
+    let localName;
+    let importedName;
+    let isDefaultImport;
+    // e.g. import react from 'react'
+    let typeName = 'ImportClause';
+    if (namedBindings) {
+      if (ts.isNamespaceImport(namedBindings)) {
+        // e.g. import * as react from 'react'
+        typeName = 'NamespaceImport';
+      } else if (ts.isNamedImports(namedBindings)) {
+        // e.g. import { Component } from 'react'
+        typeName = 'NamedImports';
+      }
+    }
+
+    if (typeName === 'NamespaceImport') {
+      // e.g. import * as _ from 'lodash'
+      localName = namedBindings.name.text;
+      importedName = localName;
+      isDefaultImport = true;
+    } else if (name) {
+      // e.g. import foo from 'x'
+      localName = name.text;
+      importedName = localName;
+      isDefaultImport = true;
+    }
+    if (typeName === 'NamespaceImport' || name) {
+      const option = {
+        value,
+        importedName,
+        name: importedName || localName,
+        isDefaultImport,
+        type: typeName,
+        localName,
+      }
+      prevSpecsData.push(option);
+      customResolveOption(option, nameHook, newSpecsData, value);
+    }
+    // e.g. import { debounce, isEqual as isDeepEqual } from 'lodash'
+    if (typeName === 'NamedImports' && namedBindings) {
+      namedBindings.forEachChild((namedBinding) => {
+        const importSpecifier = namedBinding;
+        let option;
+        const typeName = 'ImportSpecifier';
+        const isDefaultImport = false;
+        let importedName;
+        let localName;
+
+        if (!importSpecifier.propertyName) {
+          // e.g. import { debounce } from 'lodash'
+          importedName = importSpecifier.name.text;
+          localName = undefined;
+        } else {
+          // e.g. import { isEqual as isDeepEqual } from 'lodash'
+          localName = importSpecifier.name.text;
+          importedName = importSpecifier.propertyName.text;
+        }
+        option = {
+          value,
+          importedName,
+          name: importedName || localName,
+          isDefaultImport,
+          type: typeName,
+          localName,
+        }
+        prevSpecsData.push(option);
+        customResolveOption(option, nameHook, newSpecsData, value);
+      })
+    }
+
+  });
+}
+
+
+function customResolveOption(option, nameHook, newSpecsData, value) {
+  const coutomConfig = nameHook({ ...option }) || value;
+  if (Array.isArray(coutomConfig)) {
+    newSpecsData.push(...coutomConfig.filter(v => v));
+  } else {
+    newSpecsData.push(Object.assign({},
+      option,
+      typeof coutomConfig === 'object' ? coutomConfig : {
+        value: coutomConfig,
+      }
+    ));
+  }
+}

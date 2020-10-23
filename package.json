@@ -1,6 +1,6 @@
 {
   "name": "@zongze/ts-import-plugin",
-  "version": "0.0.1",
+  "version": "0.0.1-alpha.0",
   "description": "babel-plugin-import TypeScript version",
   "main": "index.js",
   "typings": "index.d.ts",
@@ -89,8 +89,7 @@
     ]
   },
   "husky": {
-    "hooks": {
-    }
+    "hooks": {}
   },
   "nyc": {
     "extends": "@istanbuljs/nyc-config-typescript",

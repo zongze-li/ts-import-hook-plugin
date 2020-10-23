@@ -1,7 +1,7 @@
 const createTransformerPlugin = require('../lib').default;
 
 module.exports = exports.default = createTransformerPlugin({
-    libraryName: new RegExp(`(^@q7/athena-gen/?$)|(^@q7/athena-gen/lib/?$)|(^@q7/athena-gen/lib/entity-fields/?$)|(^@q7/athena-gen/lib/entity-interfaces/?$)|(^@q7/athena-gen/src/?$)|(^@q7/athena-gen/src/entity-fields/?$)|(^@q7/athena-gen/src/entity-interfaces/?$)`),
+    libraryName: new RegExp(`(/athena-gen/?((lib)|(src))?/?((entity-fields)|(entity-interfaces)|(entity-constants))?/?$)`),
     customName(option) {
         const { value, name, isDefaultImport } = option;
         if (!value) {
@@ -13,43 +13,79 @@ module.exports = exports.default = createTransformerPlugin({
 
 module.exports.customName = customName;
 
-function customName(value, isDefaultImport) {
 
-    return (name) => {
-        // import { F_TenantUser_account, EN_Account, IAccountingBook, ENUM_BankAccountType } from '/athena-gen';
-        console.log('customName testPlugin', value, name);
+function customName(value, isDefaultImport, importedName) {
 
-        let newVal = `${value}`;
-        if (!isDefaultImport) {
-            if (name.startsWith('EN_')) {
+	return (name) => {
+		// import { F_TenantUser_account, EN_Account, IAccountingBook, ENUM_BankAccountType } from '@q7/athena-gen';
 
-                newVal = `${value}/entity-names`;
+		let newVal = `${value}`;
 
-            } else if (name.startsWith('ENUM_')) {
+		if (value.includes('@root/gen') && !isDefaultImport) {
+			if (name.startsWith('FC_')) {
 
-                newVal = `${value}/enums`;
+				newVal = `@root/gen/form-constants/${name}`;
 
-            } else if (name.startsWith('F_')) {
+			} else if (name.endsWith('Constants')) {
 
-                const matchList = name.match(/F_([^_]+)/) || [];
-                const entityName = matchList[1];
+				newVal = `@q7/athena-gen/lib/entity-constants/${name}`;
 
-                if (entityName) {
-                    newVal = `${value}${!value.includes('/entity-fields') ? '/entity-fields' : ''}/${entityName}`;
-                }
+			} else {
+				// N.B: 直接当做引入 @q7/athena-gen 包里的内容就行了
+				value = '@q7/athena-gen';
+			}
+		}
 
-            } else if (/^I[A-Z]/.test(name)) {
+		if (value.includes('@q7/athena-gen') && !isDefaultImport) {
 
-                newVal = `${value}${!value.includes('/entity-interfaces') ? '/entity-interfaces' : ''}/${name}`;
-            }
-        }
+			if (name.startsWith('EN_')) {
 
-        if (!/^@q7\/athena-gen\/lib\//.test(newVal)) {
-            if (!/^@q7\/athena-gen\/src\//.test(newVal)) {
-                newVal = newVal.replace(/(@q7\/athena-gen\/)/, `$1lib/`)
-            }
-        }
+				newVal = `@q7/athena-gen/lib/entity-names`;
 
-        return newVal.replace(/\/[\/]+/g, '/');
-    };
+			} else if (name.startsWith('ENUM_')) {
+
+				newVal = `@q7/athena-gen/lib/enums`;
+
+			} else if (name.startsWith('F_')) {
+
+				const matchList = name.match(/F_([^_]+)/) || [];
+				const entityName = matchList[1];
+
+				if (entityName) {
+					newVal = `${value}${!value.includes('/entity-fields') ? '/entity-fields' : ''}/${entityName}`;
+				}
+
+			} else if (/^I[A-Z]/.test(name)) {
+
+				newVal = `${value}${!value.includes('/entity-interfaces') ? '/entity-interfaces' : ''}/${name}`;
+
+			} else if (name.endsWith('Constants')) {
+				// case: ResourceConstants => import { ResourceConstants } from "@q7/athena-gen/lib";
+
+				newVal = `@q7/athena-gen/lib/entity-constants/${name}`;
+			}
+
+			// N.B: 作为以上转换不正确的修复，如中间差了 '/lib/' 之类的
+			if (!/\/athena-gen\/lib(\/|$)/.test(newVal)) {
+				if (!/\/athena-gen\/src(\/|$)/.test(newVal)) {
+					newVal = newVal.replace(/(\/athena-gen\/)/, `$1lib/`)
+				}
+			}
+
+			importedName = importedName || '';
+			if (importedName === 'SettingKeys') {
+				newVal = value.replace(/\/athena-gen\/.*/, '/athena-gen/lib/setting-keys-enum')
+			}
+			if (importedName === 'HttpErrorCodes') {
+				newVal = value.replace(/\/athena-gen\/.*/, '/athena-gen/lib/server-errors')
+			}
+
+		}
+
+
+		// console.log('customName testPlugin', value, name, newVal);
+
+		return newVal.replace(/\/[\/]+/g, '/');
+	};
 }
+

@@ -9,7 +9,7 @@ export class Test extends React.PureComponent<void, void> {
   render() {
     return (
       <OtherComponent>
-        <Alert message='hello world'/>
+        <Alert message='hello world' />
       </OtherComponent>
     )
   }
